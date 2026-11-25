@@ -1,0 +1,26 @@
+from fpdf import FPDF
+class DataReportPDF(FPDF):
+    def header(self):
+        self.set_font("Arial", "B", 14)
+        self.cell(0, 10, "Protocol of Data Processing", border=False, ln=1, align="C")
+        self.ln(4)
+
+    def footer(self):
+        self.set_y(-15)
+        self.set_font("Arial", "I", 9)
+        self.cell(0, 10, f"Page {self.page_no()}", align="C")
+
+summary_metrics = {
+    "Total input records": 15000,
+    "Valid records": 14920,
+    "Dropped duplicates": 80,
+}
+pdf = DataReportPDF(orientation="P", unit="mm", format="A4")
+pdf.add_page()
+pdf.set_font("Arial", size=11)
+
+for metric, value in summary_metrics.items():
+    pdf.cell(0, 8, txt=f"{metric}: {value}", ln=1)
+
+pdf.ln(6)
+pdf.output("report_pyfpdf.pdf", "F")
