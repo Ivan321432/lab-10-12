@@ -1,0 +1,37 @@
+from reportlab.lib.pagesizes import A4
+from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet
+
+processed_rows = [
+    ["Module / Task", "Processed Records", "Errors", "Avg Time (ms)"],
+    ["Input Dataset Parsing", "12400", "3", "1.42"],
+    ["Validation & Cleaning", "12397", "12", "0.85"],
+    ["Metrics Aggregation", "12385", "0", "2.10"],
+]
+
+doc = SimpleDocTemplate("report_reportlab.pdf", pagesize=A4)
+styles = getSampleStyleSheet()
+elements = []
+
+elements.append(Paragraph("Data Processing Report", styles["Title"]))
+elements.append(Spacer(1, 12))
+elements.append(
+    Paragraph(
+        "Document generated automatically after data cleaning and aggregation steps.",
+        styles["Normal"]
+    )
+)
+elements.append(Spacer(1, 16))
+
+table = Table(processed_rows, colWidths=[180, 110, 80, 110])
+table.setStyle(TableStyle([
+    ("BACKGROUND", (0, 0), (-1, 0), colors.darkblue),
+    ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+    ("ALIGN", (1, 1), (-1, -1), "CENTER"),
+    ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.whitesmoke, colors.lightgrey]),
+]))
+
+elements.append(table)
+doc.build(elements)
