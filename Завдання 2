@@ -1,0 +1,201 @@
+import csv
+import json
+import statistics
+from pathlib import Path
+from typing import Any
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+
+class DataProcessor:
+    """Клас для завантаження, перевірки та оброблення записів даних."""
+
+    def __init__(self) -> None:
+        # Інкапсульований список оброблених записів
+        self._records: list[dict[str, Any]] = []
+
+    @property
+    def records(self) -> list[dict[str, Any]]:
+        """Повертає копію списку завантажених записів."""
+        return list(self._records)
+
+    def load_records(self, file_path: str) -> list[dict[str, Any]]:
+        """Завантажує та перевіряє дані з CSV або JSON файлу."""
+        path = Path(file_path)
+        if not path.exists():
+            raise FileNotFoundError(f"Файл не знайдено: {path}")
+
+        suffix = path.suffix.lower()
+        raw_rows: list[dict[str, Any]] = []
+
+        if suffix == ".csv":
+            with path.open(mode="r", encoding="utf-8", newline="") as f:
+                reader = csv.DictReader(f)
+                if not reader.fieldnames:
+                    raise ValueError("CSV-файл порожній або не містить заголовків.")
+                raw_rows = list(reader)
+        elif suffix == ".json":
+            with path.open(mode="r", encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, list) or not data:
+                raise ValueError("JSON-файл повинен містити непустий список об'єктів.")
+            raw_rows = data
+        else:
+            raise ValueError("Підтримуються лише формати .csv та .json.")
+
+        normalized: list[dict[str, Any]] = []
+        for idx, row in enumerate(raw_rows, start=1):
+            if not isinstance(row, dict):
+                raise ValueError(f"Рядок/елемент #{idx} має некоректну структуру.")
+
+            try:
+                task_name = str(row["task"]).strip()
+                processed = int(row["processed"])
+                errors = int(row["errors"])
+                avg_time_ms = float(row["avg_time_ms"])
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"Некоректні або відсутні поля (task, processed, errors, avg_time_ms) у записі #{idx}."
+                ) from exc
+
+            if not task_name or processed < 0 or errors < 0 or avg_time_ms < 0:
+                raise ValueError(f"Неприпустимі значення параметрів у записі #{idx}.")
+
+            normalized.append(
+                {
+                    "task": task_name,
+                    "processed": processed,
+                    "errors": errors,
+                    "avg_time_ms": avg_time_ms,
+                }
+            )
+
+        self._records = normalized
+        return self.records
+
+    def process_metrics(self) -> dict[str, Any]:
+        """Обчислює підсумкові метрики за завантаженими записами."""
+        if not self._records:
+            raise ValueError("Немає даних для оброблення. Спочатку завантажте файл.")
+
+        total_processed = sum(r["processed"] for r in self._records)
+        total_errors = sum(r["errors"] for r in self._records)
+        mean_time = statistics.mean(r["avg_time_ms"] for r in self._records)
+        error_rate = (total_errors / total_processed * 100) if total_processed > 0 else 0.0
+
+        return {
+            "tasks_count": len(self._records),
+            "total_processed": total_processed,
+            "total_errors": total_errors,
+            "error_rate_pct": round(error_rate, 2),
+            "mean_time_ms": round(mean_time, 2),
+        }
+
+
+class PdfReportGenerator:
+    """Клас для генерації PDF-звіту з використанням ReportLab."""
+
+    def __init__(self, page_size: tuple[float, float] = A4) -> None:
+        self.page_size = page_size
+        self.styles = getSampleStyleSheet()
+
+    def generate_pdf(
+        self,
+        output_path: str,
+        records: list[dict[str, Any]],
+        summary: dict[str, Any],
+    ) -> Path:
+        """Формує та зберігає PDF-документ із підсумками і таблицею даних."""
+        out_file = Path(output_path)
+        if out_file.suffix.lower() != ".pdf":
+            out_file = out_file.with_suffix(".pdf")
+
+        doc = SimpleDocTemplate(str(out_file), pagesize=self.page_size)
+        elements: list[Any] = []
+
+        # Заголовок та короткий опис звіту
+        elements.append(Paragraph("Automated Data Processing Report", self.styles["Title"]))
+        elements.append(Spacer(1, 10))
+        elements.append(
+            Paragraph(
+                f"Tasks analyzed: {summary['tasks_count']} | "
+                f"Total records: {summary['total_processed']} | "
+                f"Total errors: {summary['total_errors']} ({summary['error_rate_pct']}%) | "
+                f"Mean time: {summary['mean_time_ms']} ms",
+                self.styles["Normal"],
+            )
+        )
+        elements.append(Spacer(1, 16))
+        # Формування даних таблиці для ReportLab
+        table_data = [["Task / Stage", "Processed", "Errors", "Avg Time (ms)"]]
+        for r in records:
+            table_data.append(
+                [
+                    r["task"],
+                    str(r["processed"]),
+                    str(r["errors"]),
+                    f"{r['avg_time_ms']:.2f}",
+                ]
+            )
+
+        table = Table(table_data, colWidths=[210, 90, 80, 100])
+        table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1B365D")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+                    ("ALIGN", (1, 1), (-1, -1), "CENTER"),
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F2F4F8")]),
+                    ("TOPPADDING", (0, 0), (-1, -1), 6),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                ]
+            )
+        )
+
+        elements.append(table)
+        doc.build(elements)
+        return out_file
+
+def run_cli() -> None:
+    #Організовує діалог із користувачем, запуск оброблення та обробку винятків.
+    print("Генератор PDF-звіту оброблення даних (ReportLab)")
+    user_input = input("Введіть шлях до файлу (.csv або .json) [data.csv]: ").strip()
+    input_path = user_input if user_input else "data.csv"
+
+    user_output = input("Введіть ім'я вихідного PDF-файлу [processing_report.pdf]: ").strip()
+    output_path = user_output if user_output else "processing_report.pdf"
+
+    processor = DataProcessor()
+    generator = PdfReportGenerator()
+
+    try:
+        print("[1/3] Завантаження та перевірка вхідних даних")
+        records = processor.load_records(input_path)
+
+        print("[2/3] Обчислення підсумкових метрик")
+        summary = processor.process_metrics()
+
+        print("[3/3] Формування PDF-звіту через ReportLab")
+        saved_path = generator.generate_pdf(output_path, records, summary)
+
+        print("\nГотово! Звіт успішно сформовано.")
+        print(f"Файл звіту: {saved_path.resolve()}")
+        print(
+            f"Підсумок: записів={summary['total_processed']}, "
+            f"помилок={summary['total_errors']}, "
+            f"сер. час={summary['mean_time_ms']} мс"
+        )
+    except FileNotFoundError as exc:
+        print(f"[Помилка файлу] {exc}")
+    except (ValueError, KeyError, json.JSONDecodeError, csv.Error) as exc:
+        print(f"[Помилка даних] {exc}")
+    except OSError as exc:
+        print(f"[Помилка введення-виведення] Не вдалося прочитати або записати файл: {exc}")
+    except Exception as exc:
+        print(f"[Непередбачена помилка] {exc}")
+
+if __name__ == "__main__":
+    run_cli()
